@@ -1136,9 +1136,11 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}.nowrap{white-space:n
           <form id="loginForm"><div class="field"><label>Usuário</label><input name="username" autocomplete="username" required placeholder="ex: rafael.teste"></div><div class="field"><label>Senha</label><input name="password" type="password" autocomplete="current-password" required placeholder="••••••••"></div><button class="btn btn-primary w100" type="submit">Entrar</button></form>
           <p class="small mt14 mb0">Acesso rápido para testes:</p><div class="demo-users"><button data-demo="admin">Admin</button><button data-demo="bko">BKO</button><button data-demo="gerencia">Gerência</button><button data-demo="rafael.teste">Vendedor</button></div>
           <p class="small mt14">Senhas: admin123, bko123, gerencia123 ou comercial123.</p>
+          ${DEFAULT_GOOGLE_CALENDAR_CLIENT_ID ? `<hr><div class="login-options"><button type="button" class="social-login" id="googleSignInBtn"><span>G</span><div><strong>Continuar com Google</strong><small>Entrar com sua conta Google</small></div></button></div><div id="googleSignInMsg" class="small mt10" style="min-height:18px"></div>` : ''}
         </div>
       </section>
     </div>`}
+
   function renderLayout(user){const app=document.getElementById('app');app.innerHTML=`
     <div class="app">
       <header class="platform-header">
@@ -2160,7 +2162,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}.nowrap{white-space:n
       if(tab==='produtos')updateOpportunityProductFields(form);
       return;
     }
-    if(action==='logout'){sessionStorage.removeItem(SESSION_KEY);localStorage.removeItem(SESSION_KEY);render();return}
+    if(action==='logout'){sessionStorage.removeItem(SESSION_KEY);localStorage.removeItem(SESSION_KEY);googleSignOut();render();setupGoogleSignIn();return}
     if(action==='resetData'){if(confirm('Restaurar dados de demonstração e apagar alterações locais?'))resetData();return}
     if(action==='newOpp'){try{const st=getState();const u=getUser();let stageId=Number(act.dataset.stage||0);let funnelId=st.stages.find(s=>Number(s.id)===stageId)?.funnelId||ui.funnelId;const first=getFirstStage(st,funnelId);oppModal({},first?.id||stageId);}catch(err){console.error(err);toast('Não foi possível abrir a nova oportunidade: '+(err?.message||err),'error')}return}
     if(action==='openOpp'){try{const st=getState();const card=act.closest('[data-opp-id]');const opp=st.opportunities.find(o=>o.id===Number(card?.dataset.oppId));if(opp)oppModal(opp);else toast('Oportunidade não encontrada para edição.','error');}catch(err){console.error(err);toast('Não foi possível editar a oportunidade: '+(err?.message||err),'error')}return}
@@ -2759,7 +2761,128 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}.nowrap{white-space:n
   function exportCredit(){const st=getState();const rows=[['Protocolo','Cliente','Documento','Vendedor','Produto','Status','Score','Risco','Criado','Atualizado'],...visibleAnalysis(st,getUser()).map(r=>[r.protocol,r.clientName,r.cpf,r.sellerName,r.product,r.status,r.bko?.score||'',r.bko?.riskLevel||'',fmtDate(r.createdAt),fmtDate(r.updatedAt)])];download('analises_sulnet.csv',toCSV(rows))}
   function exportOpps(){const st=getState();const rows=[['Protocolo','Cliente','Documento','Telefone','Funil','Etapa','Vendedor','Cidade','Valor Mensal','Status'],...visibleOpps(st,getUser()).map(o=>[o.protocol,o.clientName,o.clientCpf,o.clientPhone,funnelName(st,o.funnelId),stageName(st,o.stageId),userName(st,o.assignedUserId),o.city,o.monthlyValue,o.status])];download('oportunidades_sulnet.csv',toCSV(rows))}
 
+  // ── Google Sign-In (OAuth 2.0 / Identity Services) ──────────────────────
+  const GOOGLE_AUTH_SESSION_KEY = 'sulnet_google_auth_token';
+
+  function googleAuthToken() {
+    return sessionStorage.getItem(GOOGLE_AUTH_SESSION_KEY) || localStorage.getItem(GOOGLE_AUTH_SESSION_KEY) || '';
+  }
+
+  function setGoogleAuthToken(token) {
+    sessionStorage.setItem(GOOGLE_AUTH_SESSION_KEY, token);
+    localStorage.setItem(GOOGLE_AUTH_SESSION_KEY, token);
+  }
+
+  function clearGoogleAuthToken() {
+    sessionStorage.removeItem(GOOGLE_AUTH_SESSION_KEY);
+    localStorage.removeItem(GOOGLE_AUTH_SESSION_KEY);
+  }
+
+  async function googleSignOut() {
+    const token = googleAuthToken();
+    if (token) {
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+      } catch (e) { /* ignore */ }
+      clearGoogleAuthToken();
+    }
+    if (window.google && window.google.accounts && window.google.accounts.id) {
+      try { window.google.accounts.id.disableAutoSelect(); } catch (e) { /* ignore */ }
+    }
+  }
+
+  async function handleGoogleCredential(response) {
+    const msgEl = document.getElementById('googleSignInMsg');
+    const btnEl = document.getElementById('googleSignInBtn');
+    if (msgEl) { msgEl.style.color = 'var(--muted)'; msgEl.textContent = 'Verificando conta Google…'; }
+    if (btnEl) btnEl.disabled = true;
+    try {
+      const res = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential: response.credential })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Falha na autenticação');
+      setGoogleAuthToken(data.token);
+      if (msgEl) { msgEl.style.color = 'var(--green)'; msgEl.textContent = 'Autenticado como ' + (data.user.name || data.user.email) + '. Entrando…'; }
+      // Find or create a matching system user by email, then log in
+      const st = getState();
+      const matchedUser = st.users.find(u => u.active && u.email && u.email.toLowerCase() === (data.user.email || '').toLowerCase());
+      if (matchedUser) {
+        setUser(matchedUser.id);
+        location.hash = '#/crm';
+        render();
+      } else {
+        // No local user matched — show a helpful message
+        if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Conta Google autenticada, mas nenhum usuário do sistema está vinculado ao e-mail ' + data.user.email + '. Contate o administrador.'; }
+        if (btnEl) btnEl.disabled = false;
+        clearGoogleAuthToken();
+      }
+    } catch (err) {
+      console.error('Google Sign-In error:', err);
+      if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Erro ao autenticar com Google: ' + (err.message || err); }
+      if (btnEl) btnEl.disabled = false;
+    }
+  }
+
+  function setupGoogleSignIn() {
+    if (!DEFAULT_GOOGLE_CALENDAR_CLIENT_ID) return;
+    const btn = document.getElementById('googleSignInBtn');
+    if (!btn) return;
+
+    function initGSI() {
+      if (!window.google || !window.google.accounts || !window.google.accounts.id) return;
+      window.google.accounts.id.initialize({
+        client_id: DEFAULT_GOOGLE_CALENDAR_CLIENT_ID,
+        callback: handleGoogleCredential,
+        auto_select: false,
+        cancel_on_tap_outside: true,
+      });
+      btn.addEventListener('click', function () {
+        const msgEl = document.getElementById('googleSignInMsg');
+        if (msgEl) { msgEl.style.color = 'var(--muted)'; msgEl.textContent = 'Abrindo login do Google…'; }
+        window.google.accounts.id.prompt(function (notification) {
+          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+            // One Tap not available — fall back to renderButton popup
+            const container = document.createElement('div');
+            container.style.display = 'none';
+            document.body.appendChild(container);
+            window.google.accounts.id.renderButton(container, {
+              type: 'standard', theme: 'outline', size: 'large', text: 'signin_with'
+            });
+            const inner = container.querySelector('[role="button"]') || container.firstElementChild;
+            if (inner) inner.click();
+            setTimeout(() => container.remove(), 500);
+          }
+        });
+      });
+    }
+
+    if (window.google && window.google.accounts && window.google.accounts.id) {
+      initGSI();
+    } else {
+      // Wait for the GSI library to load (already included via <script> tag in <head>)
+      const started = Date.now();
+      const timer = setInterval(function () {
+        if (window.google && window.google.accounts && window.google.accounts.id) {
+          clearInterval(timer);
+          initGSI();
+        } else if (Date.now() - started > 10000) {
+          clearInterval(timer);
+          const msgEl = document.getElementById('googleSignInMsg');
+          if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Não foi possível carregar o login do Google. Verifique sua conexão.'; }
+        }
+      }, 150);
+    }
+  }
+
   render();
+  // Wire up Google Sign-In on the initial paint (if the login page is shown)
+  if (!getUser()) setupGoogleSignIn();
 })();
 
   
