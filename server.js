@@ -1,45 +1,60 @@
-const express = require('express');
-const path = require('path');
-const fs = require('fs');
+# Sistema Integrado Sulnet v45
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+Versão robusta para Railway. Corrige erro comum de variáveis coladas com `NOME=valor`.
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CALENDAR_CLIENT_ID || '';
-const GOOGLE_AUTHORIZED_ORIGINS = process.env.GOOGLE_AUTHORIZED_ORIGINS || '';
+## Variáveis corretas na Railway
 
-function renderIndex() {
-  const templatePath = path.join(__dirname, 'public', 'index.template.html');
-  let html = fs.readFileSync(templatePath, 'utf8');
+Use estes nomes:
 
-  return html
-    .replaceAll('__GOOGLE_CALENDAR_CLIENT_ID__', GOOGLE_CLIENT_ID)
-    .replaceAll('__GOOGLE_AUTHORIZED_ORIGINS__', GOOGLE_AUTHORIZED_ORIGINS);
-}
+```env
+GOOGLE_CALENDAR_CLIENT_ID=786355285772-0hujrij5hpadrddjq9konaci7825ljr8.apps.googleusercontent.com
+GOOGLE_AUTHORIZED_ORIGINS=http://localhost:3000,https://sistema-integrado-crm-production.up.railway.app
+```
 
-app.disable('x-powered-by');
+Também aceita temporariamente os nomes em português:
 
-app.get('/health', (_req, res) => {
-  res.status(200).json({
-    ok: true,
-    app: 'Sistema Integrado Sulnet',
-    version: 'v43',
-    googleCalendarConfigured: Boolean(GOOGLE_CLIENT_ID)
-  });
-});
+```env
+ID_DO_CLIENTE_DO_CALENDARIO_DO_GOOGLE=786355285772-0hujrij5hpadrddjq9konaci7825ljr8.apps.googleusercontent.com
+ORIGENS_AUTORIZADAS_DO_GOOGLE=http://localhost:3000,https://sistema-integrado-crm-production.up.railway.app
+```
 
-app.get('/api/config', (_req, res) => {
-  res.json({
-    googleCalendarConfigured: Boolean(GOOGLE_CLIENT_ID),
-    authorizedOrigins: GOOGLE_AUTHORIZED_ORIGINS
-  });
-});
+Mas o recomendado é usar os nomes em inglês.
 
-app.get('*', (_req, res) => {
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(renderIndex());
-});
+## Diagnóstico
 
-app.listen(PORT, () => {
-  console.log(`Sistema Integrado Sulnet rodando na porta ${PORT}`);
-});
+Depois do deploy, abra:
+
+```text
+https://sistema-integrado-crm-production.up.railway.app/api/config
+```
+
+O retorno precisa mostrar:
+
+```json
+"googleCalendarConfigured": true,
+"googleClientIdLooksValid": true
+```
+
+Se `googleClientIdLooksValid` for `false`, a variável do Client ID está errada.
+
+## Google Cloud
+
+No OAuth Client do Google Cloud, adicione em Authorized JavaScript origins:
+
+```text
+https://sistema-integrado-crm-production.up.railway.app
+```
+
+Sem barra final, sem `/#/agenda`.
+
+## Rodar localmente
+
+```bash
+node server.js
+```
+
+Abra:
+
+```text
+http://localhost:3000
+```

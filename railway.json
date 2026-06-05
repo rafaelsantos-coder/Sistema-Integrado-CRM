@@ -1,11 +1,13 @@
 {
-  "$schema": "https://railway.app/railway.schema.json",
-  "build": {
-    "builder": "NIXPACKS"
+  "name": "sistema-integrado-sulnet",
+  "version": "1.0.0",
+  "description": "Sistema Integrado Sulnet - CRM, Agenda, Analise de Credito, Administracao e Relatorios",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
   },
-  "deploy": {
-    "startCommand": "npm start",
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 10
-  }
+  "engines": {
+    "node": "20.x"
+  },
+  "private": true
 }
